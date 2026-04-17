@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Minhas Finanças</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff; --bg2: #f5f5f4; --bg3: #efede8;
+    --text: #1a1a1a; --text2: #6b7280; --text3: #9ca3af;
+    --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18);
+    --success: #0f6e56; --danger: #a32d2d; --radius: 10px; --radius-sm: 7px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --bg2: #2c2c2e; --bg3: #3a3a3c;
+      --text: #f2f2f7; --text2: #aeaeb2; --text3: #636366;
+      --border: rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.18);
+      --success: #34c759; --danger: #ff453a;
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg3); color: var(--text); min-height: 100vh; padding: 0; }
+  #root { max-width: 680px; margin: 0 auto; background: var(--bg3); min-height: 100vh; padding: 0 16px 48px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 12px; border: 0.5px solid var(--border2); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus { border-color: var(--text2); }
+  button {
+    padding: 9px 16px; border: 0.5px solid var(--border2); border-radius: var(--radius-sm);
+    background: transparent; color: var(--text); font-size: 13px; font-family: inherit; cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+  button:hover { background: var(--bg2); }
+  button:active { transform: scale(0.98); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const CATS = [
+  { id: "entretenimento", label: "Entretenimento", color: "#7F77DD" },
+  { id: "investimentos",  label: "Investimentos",  color: "#639922" },
+  { id: "transporte",     label: "Transporte",     color: "#378ADD" },
+  { id: "assinaturas",    label: "Assinaturas",    color: "#1D9E75" },
+  { id: "alimentacao",    label: "Alimentação",    color: "#BA7517" },
+  { id: "moradia",        label: "Moradia",        color: "#D85A30" },
+  { id: "saude",          label: "Saúde",          color: "#D4537E" },
+  { id: "outros",         label: "Outros",         color: "#888780" },
+];
+const catMap = Object.fromEntries(CATS.map(c => [c.id, c]));
+const fmt = n => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const todayStr = () => new Date().toISOString().split("T")[0];
+
+const LS_KEY = "financas_data";
+function loadData() {
+  try { const d = localStorage.getItem(LS_KEY); return d ? JSON.parse(d) : null; } catch { return null; }
+}
+function saveData(data) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+}
+
+const s = { card: { background: "var(--bg)", border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "1rem 1.25rem" } };
+
+function Card({ children, style }) {
+  return <div style={{ ...s.card, ...style }}>{children}</div>;
+}
+function Metric({ label, value, color }) {
+  return (
+    <div style={{ background: "var(--bg2)", borderRadius: "var(--radius-sm)", padding: "0.9rem", flex: 1, minWidth: 0 }}>
+      <p style={{ fontSize: 12, color: "var(--text2)", marginBottom: 4 }}>{label}</p>
+      <p style={{ fontSize: 17, fontWeight: 500, color: color || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</p>
+    </div>
+  );
+}
+function CatBadge({ catId }) {
+  const c = catMap[catId] || catMap.outros;
+  return <span style={{ background: c.color + "22", color: c.color, fontSize: 11, padding: "2px 7px", borderRadius: 99, fontWeight: 500 }}>{c.label}</span>;
+}
+function Bar({ value, max, color }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div style={{ background: "var(--bg2)", borderRadius: 99, height: 5, overflow: "hidden" }}>
+      <div style={{ width: `${pct}%`, height: "100%", background: value > max && max > 0 ? "var(--danger)" : color, borderRadius: 99, transition: "width 0.3s" }} />
+    </div>
+  );
+}
+
+function DashboardTab({ transactions, budgets, goals, byCategory }) {
+  const income = transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const expenses = transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const balance = income - expenses;
+  const recent = [...transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+  const hasSpending = CATS.some(c => byCategory[c.id] > 0 || budgets[c.id] > 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Metric label="Saldo" value={fmt(balance)} color={balance >= 0 ? "var(--success)" : "var(--danger)"} />
+        <Metric label="Entradas" value={fmt(income)} color="var(--success)" />
+        <Metric label="Saídas" value={fmt(expenses)} color="var(--danger)" />
+      </div>
+
+      <Card>
+        <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Orçamento por categoria</p>
+        {!hasSpending ? (
+          <p style={{ fontSize: 13, color: "var(--text3)" }}>Adicione transações e configure orçamentos para ver os dados aqui.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {CATS.map(cat => {
+              const spent = byCategory[cat.id] || 0;
+              const limit = budgets[cat.id] || 0;
+              if (spent === 0 && limit === 0) return null;
+              const over = limit > 0 && spent > limit;
+              return (
+                <div key={cat.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: cat.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 13 }}>{cat.label}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: over ? "var(--danger)" : "var(--text2)" }}>
+                      {fmt(spent)}{limit > 0 ? ` / ${fmt(limit)}` : ""}
+                    </span>
+                  </div>
+                  {limit > 0 && <Bar value={spent} max={limit} color={cat.color} />}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {goals.length > 0 && (
+        <Card>
+          <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Objetivos</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {goals.map(g => {
+              const pct = g.target > 0 ? Math.min((g.current / g.target) * 100, 100) : 0;
+              return (
+                <div key={g.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 13 }}>{g.name}</span>
+                    <span style={{ fontSize: 12, color: "var(--text2)" }}>{pct.toFixed(0)}% — {fmt(g.current)} / {fmt(g.target)}</span>
+                  </div>
+                  <Bar value={g.current} max={g.target} color="#1D9E75" />
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Transações recentes</p>
+        {recent.length === 0 ? (
+          <p style={{ fontSize: 13, color: "var(--text3)" }}>Nenhuma transação ainda.</p>
+        ) : recent.map((t, i) => (
+          <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: i < recent.length - 1 ? "0.5px solid var(--border)" : "none" }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 3 }}>{t.description || catMap[t.category]?.label || (t.type === "income" ? "Entrada" : "Gasto")}</p>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {t.type === "expense" ? <CatBadge catId={t.category} /> : <span style={{ fontSize: 11, background: "#E1F5EE", color: "#0F6E56", padding: "2px 7px", borderRadius: 99, fontWeight: 500 }}>Entrada</span>}
+                <span style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</span>
+              </div>
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 500, color: t.type === "income" ? "var(--success)" : "var(--danger)" }}>
+              {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
+            </span>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function TransacoesTab({ transactions, onSave }) {
+  const [type, setType] = useState("expense");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState("outros");
+  const [description, setDescription] = useState("");
+  const [date, setDate] = useState(todayStr());
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  const add = () => {
+    const n = parseFloat(amount.replace(",", "."));
+    if (!amount || isNaN(n) || n <= 0) { setError("Informe um valor válido."); return; }
+    setError("");
+    onSave([{ id: Date.now().toString(), type, amount: n, category: type === "income" ? "outros" : category, description, date }, ...transactions]);
+    setAmount(""); setDescription(""); setDate(todayStr());
+  };
+  const remove = id => onSave(transactions.filter(t => t.id !== id));
+  const sorted = [...transactions].filter(t => filter === "all" || t.type === filter).sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <Card>
+        <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Nova transação</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {[["expense","Gasto"],["income","Entrada"]].map(([v,l]) => (
+            <button key={v} onClick={() => setType(v)} style={{
+              flex: 1, borderRadius: "var(--radius-sm)",
+              border: type === v ? `2px solid ${v === "income" ? "#1D9E75" : "#E24B4A"}` : "0.5px solid var(--border2)",
+              background: type === v ? (v === "income" ? "#E1F5EE22" : "#FCEBEB22") : "transparent",
+              color: type === v ? (v === "income" ? "#0F6E56" : "#A32D2D") : "var(--text2)",
+              fontWeight: 500, fontSize: 13
+            }}>{l}</button>
+          ))}
+        </div>
+        <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>Valor (R$)</label>
+        <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0,00" step="0.01" min="0" style={{ marginBottom: 10 }} />
+        {type === "expense" && <>
+          <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>Categoria</label>
+          <select value={category} onChange={e => setCategory(e.target.value)} style={{ marginBottom: 10 }}>
+            {CATS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </>}
+        <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>Descrição (opcional)</label>
+        <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex: Netflix, Uber, Salário..." style={{ marginBottom: 10 }} />
+        <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>Data</label>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ marginBottom: 12 }} />
+        {error && <p style={{ fontSize: 12, color: "var(--danger)", marginBottom: 8 }}>{error}</p>}
+        <button onClick={add} style={{ width: "100%", padding: "10px", fontWeight: 500 }}>Adicionar</button>
+      </Card>
+
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <p style={{ fontSize: 14, fontWeight: 500 }}>Histórico ({sorted.length})</p>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["all","Todos"],["expense","Gastos"],["income","Entradas"]].map(([v,l]) => (
+              <button key={v} onClick={() => setFilter(v)} style={{
+                fontSize: 11, padding: "4px 10px", borderRadius: 99,
+                border: filter === v ? "none" : "0.5px solid var(--border)",
+                background: filter === v ? "var(--text)" : "transparent",
+                color: filter === v ? "var(--bg)" : "var(--text2)",
+                fontWeight: filter === v ? 500 : 400
+              }}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {sorted.length === 0 ? <p style={{ fontSize: 13, color: "var(--text3)" }}>Nenhuma transação.</p>
+        : sorted.map((t, i) => (
+          <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < sorted.length - 1 ? "0.5px solid var(--border)" : "none" }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 3 }}>{t.description || catMap[t.category]?.label || (t.type === "income" ? "Entrada" : "Gasto")}</p>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {t.type === "expense" ? <CatBadge catId={t.category} /> : <span style={{ fontSize: 11, background: "#E1F5EE22", color: "#1D9E75", padding: "2px 7px", borderRadius: 99, fontWeight: 500 }}>Entrada</span>}
+                <span style={{ fontSize: 11, color: "var(--text3)" }}>{t.date}</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: t.type === "income" ? "var(--success)" : "var(--danger)" }}>
+                {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
+              </span>
+              <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 18, padding: 0, lineHeight: 1 }}>×</button>
+            </div>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function OrcamentoTab({ budgets, byCategory, onSave }) {
+  const [editing, setEditing] = useState({ ...budgets });
+  const [saved, setSaved] = useState(false);
+  const handleSave = () => { onSave(editing); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <p style={{ fontSize: 13, color: "var(--text2)" }}>Defina limites mensais por categoria e acompanhe seus gastos.</p>
+      {CATS.map(cat => {
+        const spent = byCategory[cat.id] || 0;
+        const limit = editing[cat.id] || 0;
+        const over = limit > 0 && spent > limit;
+        return (
+          <Card key={cat.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: cat.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 14, fontWeight: 500 }}>{cat.label}</span>
+              </div>
+              {over && <span style={{ fontSize: 11, color: "var(--danger)", fontWeight: 500 }}>Limite excedido</span>}
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: limit > 0 ? 10 : 0 }}>
+              <label style={{ fontSize: 12, color: "var(--text2)", flexShrink: 0 }}>Limite (R$)</label>
+              <input type="number" value={editing[cat.id] || ""} onChange={e => setEditing({ ...editing, [cat.id]: parseFloat(e.target.value) || 0 })} placeholder="Sem limite" min="0" step="10" style={{ textAlign: "right" }} />
+            </div>
+            {limit > 0 && <>
+              <Bar value={spent} max={limit} color={cat.color} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--text2)" }}>Gasto: {fmt(spent)}</span>
+                <span style={{ fontSize: 12, color: over ? "var(--danger)" : "var(--text2)" }}>
+                  {over ? `Excedeu ${fmt(spent - limit)}` : `Restam ${fmt(limit - spent)}`}
+                </span>
+              </div>
+            </>}
+          </Card>
+        );
+      })}
+      <button onClick={handleSave} style={{ padding: "10px", fontWeight: 500, color: saved ? "var(--success)" : undefined }}>
+        {saved ? "Salvo!" : "Salvar orçamento"}
+      </button>
+    </div>
+  );
+}
+
+function ObjetivosTab({ goals, onSave }) {
+  const [name, setName] = useState("");
+  const [target, setTarget] = useState("");
+  const [addAmts, setAddAmts] = useState({});
+  const [error, setError] = useState("");
+
+  const addGoal = () => {
+    const t = parseFloat(target.replace(",", "."));
+    if (!name.trim()) { setError("Informe o nome do objetivo."); return; }
+    if (isNaN(t) || t <= 0) { setError("Informe um valor alvo válido."); return; }
+    setError("");
+    onSave([...goals, { id: Date.now().toString(), name: name.trim(), target: t, current: 0 }]);
+    setName(""); setTarget("");
+  };
+  const deposit = id => {
+    const amt = parseFloat((addAmts[id] || "").replace(",", "."));
+    if (isNaN(amt) || amt <= 0) return;
+    onSave(goals.map(g => g.id === id ? { ...g, current: Math.min(g.current + amt, g.target) } : g));
+    setAddAmts({ ...addAmts, [id]: "" });
+  };
+  const removeGoal = id => onSave(goals.filter(g => g.id !== id));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <Card>
+        <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>Novo objetivo</p>
+        <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>O que você quer comprar / juntar dinheiro?</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Viagem, PS5, Reserva de emergência..." style={{ marginBottom: 10 }} />
+        <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>Valor alvo (R$)</label>
+        <input type="number" value={target} onChange={e => setTarget(e.target.value)} placeholder="0,00" min="0" step="1" style={{ marginBottom: 12 }} />
+        {error && <p style={{ fontSize: 12, color: "var(--danger)", marginBottom: 8 }}>{error}</p>}
+        <button onClick={addGoal} style={{ width: "100%", padding: "10px", fontWeight: 500 }}>Criar objetivo</button>
+      </Card>
+      {goals.length === 0 && <p style={{ fontSize: 13, color: "var(--text3)" }}>Nenhum objetivo cadastrado ainda.</p>}
+      {goals.map(g => {
+        const pct = g.target > 0 ? Math.min((g.current / g.target) * 100, 100) : 0;
+        const done = g.current >= g.target;
+        return (
+          <Card key={g.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <p style={{ fontSize: 14, fontWeight: 500 }}>{g.name}</p>
+              <button onClick={() => removeGoal(g.id)} style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 18, padding: 0, lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 13, color: "var(--text2)" }}>{fmt(g.current)} de {fmt(g.target)}</span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: done ? "var(--success)" : "var(--text)" }}>{pct.toFixed(0)}%</span>
+            </div>
+            <Bar value={g.current} max={g.target} color="#1D9E75" />
+            {done ? (
+              <p style={{ fontSize: 13, color: "var(--success)", marginTop: 8, fontWeight: 500 }}>Objetivo atingido!</p>
+            ) : <>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <input type="number" value={addAmts[g.id] || ""} onChange={e => setAddAmts({ ...addAmts, [g.id]: e.target.value })} placeholder="Depositar valor..." min="0" step="1" style={{ flex: 1 }} />
+                <button onClick={() => deposit(g.id)} style={{ padding: "0 16px", fontWeight: 500 }}>Depositar</button>
+              </div>
+              <p style={{ fontSize: 12, color: "var(--text3)", marginTop: 8 }}>Faltam {fmt(g.target - g.current)}</p>
+            </>}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function exportData(data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "financas_backup.json"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(onImport) {
+  const input = document.createElement("input"); input.type = "file"; input.accept = ".json";
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try { const d = JSON.parse(ev.target.result); onImport(d); alert("Dados importados com sucesso!"); }
+      catch { alert("Arquivo inválido."); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function App() {
+  const [tab, setTab] = useState("dashboard");
+  const [transactions, setTransactions] = useState([]);
+  const [budgets, setBudgets] = useState({ entretenimento: 300, investimentos: 500, transporte: 200, assinaturas: 150, alimentacao: 600, moradia: 1200, saude: 200, outros: 300 });
+  const [goals, setGoals] = useState([]);
+
+  useEffect(() => {
+    const d = loadData();
+    if (d) {
+      if (d.transactions) setTransactions(d.transactions);
+      if (d.budgets) setBudgets(d.budgets);
+      if (d.goals) setGoals(d.goals);
+    }
+  }, []);
+
+  const persist = (txns, bdgts, gls) => saveData({ transactions: txns, budgets: bdgts, goals: gls });
+  const saveTxns = d => { setTransactions(d); persist(d, budgets, goals); };
+  const saveBudgets = d => { setBudgets(d); persist(transactions, d, goals); };
+  const saveGoals = d => { setGoals(d); persist(transactions, budgets, d); };
+
+  const handleImport = d => {
+    if (d.transactions) setTransactions(d.transactions);
+    if (d.budgets) setBudgets(d.budgets);
+    if (d.goals) setGoals(d.goals);
+    persist(d.transactions || transactions, d.budgets || budgets, d.goals || goals);
+  };
+
+  const byCategory = Object.fromEntries(CATS.map(c => [c.id, 0]));
+  transactions.filter(t => t.type === "expense").forEach(t => { byCategory[t.category] = (byCategory[t.category] || 0) + t.amount; });
+
+  const balance = transactions.reduce((s, t) => t.type === "income" ? s + t.amount : s - t.amount, 0);
+
+  const TABS = [["dashboard","Início"],["transacoes","Transações"],["orcamento","Orçamento"],["objetivos","Objetivos"]];
+
+  return (
+    <div style={{ fontFamily: "inherit" }}>
+      <div style={{ padding: "1.5rem 0 0.75rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600 }}>Minhas finanças</h1>
+        <div style={{ textAlign: "right" }}>
+          <p style={{ fontSize: 11, color: "var(--text3)", marginBottom: 2 }}>saldo total</p>
+          <p style={{ fontSize: 20, fontWeight: 600, color: balance >= 0 ? "var(--success)" : "var(--danger)" }}>{fmt(balance)}</p>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+        <div style={{ display: "flex", borderBottom: "0.5px solid var(--border)", flex: 1 }}>
+          {TABS.map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} style={{
+              background: "none", border: "none", cursor: "pointer",
+              borderBottom: tab === id ? "2px solid var(--text)" : "2px solid transparent",
+              padding: "10px 14px", fontSize: 13, fontWeight: tab === id ? 500 : 400,
+              color: tab === id ? "var(--text)" : "var(--text2)", marginBottom: -1, borderRadius: 0
+            }}>{label}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, paddingBottom: 1 }}>
+          <button onClick={() => exportData({ transactions, budgets, goals })} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6 }} title="Exportar dados">⬇ Exportar</button>
+          <button onClick={() => importData(handleImport)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6 }} title="Importar dados">⬆ Importar</button>
+        </div>
+      </div>
+
+      <div style={{ paddingTop: "1.25rem" }}>
+        {tab === "dashboard"  && <DashboardTab transactions={transactions} budgets={budgets} goals={goals} byCategory={byCategory} />}
+        {tab === "transacoes" && <TransacoesTab transactions={transactions} onSave={saveTxns} />}
+        {tab === "orcamento"  && <OrcamentoTab budgets={budgets} byCategory={byCategory} onSave={saveBudgets} />}
+        {tab === "objetivos"  && <ObjetivosTab goals={goals} onSave={saveGoals} />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
